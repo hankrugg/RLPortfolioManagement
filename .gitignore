@@ -1,0 +1,11 @@
+.vscode
+*pycache*
+*.log
+*.out
+*.fdb_latexmk
+*.aux
+*.fls
+*.synctex.gz
+
+data/processed/*
+.DS_Store
