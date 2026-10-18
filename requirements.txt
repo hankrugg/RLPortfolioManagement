@@ -1,0 +1,18 @@
+# Reinforcement-learning portfolio MVP
+# Tested with CPython 3.11. Create a fresh environment before installing.
+# TensorFlow and TensorBoard are intentionally omitted; this project uses PyTorch.
+
+# Data and numerical computing
+numpy==1.26.4
+pandas==2.2.3
+yfinance==0.2.61
+
+# Reinforcement learning
+gymnasium==0.29.1
+stable-baselines3==2.3.2
+torch==2.4.0
+
+# Plotting and notebooks
+matplotlib==3.9.2
+jupyterlab==4.2.5
+ipykernel==6.29.5
