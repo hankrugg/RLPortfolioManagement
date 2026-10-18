@@ -7,5 +7,5 @@
 *.fls
 *.synctex.gz
 
-data/processed/*
+data/
 .DS_Store
