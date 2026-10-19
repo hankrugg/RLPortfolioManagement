@@ -41,7 +41,7 @@ EXPERIMENT_CONFIG = {
     "environment": {
         "decision_frequency_days": 5,
         "action_type": "delta",
-        "action_scale": .1,
+        "action_scale": 0.1,
         "transaction_cost_rate": 0.0005,
         "annual_short_borrow_rate": 0.01,
         "long_exposure": 1.30,
