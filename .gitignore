@@ -7,6 +7,6 @@
 *.fls
 *.synctex.gz
 
-data/
+data/raw/*
 results/
 .DS_Store
