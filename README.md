@@ -120,3 +120,47 @@ RLPortfolioManagement/
 - **Dependency installation fails on a different Python version:** Create a fresh Python 3.11 environment and install `requirements.txt` again.
 
 Saved notebook outputs show earlier runs; rerun the cells to generate results for your environment. The comparisons use development validation, while the final two-year holdout is reserved by the training workflow. Fresh downloads and retraining may produce different results from the saved outputs.
+
+## Run parallel experiments with YAML
+
+After installing `requirements.txt` and preparing the feature file with notebooks 01
+and 02, edit `configs/batch.yaml` and start the batch from the project folder:
+
+```bash
+python run.py
+```
+
+The batch lists experiment YAML files, training seeds, and named data sources. The
+runner executes every config × seed × source combination, with at most
+`max_workers` independent processes. `threads_per_worker` limits the numerical
+threads each process uses. The supplied batch runs nine jobs: long-only and two
+long/short action-scale configurations, each with three seeds on the historical
+dataset. Concurrency follows `max_workers` in the batch YAML.
+Each job defaults to 300,000 training steps on the CPU.
+
+All configured paths are relative to the project root. A different batch file is
+optional: `python run.py configs/another_batch.yaml`. Its paths follow the same rule.
+
+Each source points to an existing feature CSV (including `.csv.gz`) with the same
+columns as notebook 02's output. To test bootstrapped paths later, generate their
+features separately and add their file paths and unique names to `data_sources`.
+An optional `data_seed` is saved as metadata; the runner does not generate
+bootstrap paths. The batch's `seeds` control training randomness independently.
+
+Inputs are aligned, scaled using preceding observations, and split chronologically
+using the original training procedure. Each worker prepares its inputs in memory;
+no shared prepared-data folder is written. The final holdout remains excluded from
+training and validation.
+
+Results are saved directly under `results/`. Each
+`results/<experiment>/<source>/seed_<seed>/` directory contains the model, resolved YAML,
+split dates, daily validation returns and weights, summary metrics, and `run.log`.
+The runner prints each job's status as it finishes. Rerunning the same
+experiment/source/seed overwrites its saved outputs.
+Ordinary job failures are recorded in their logs while the remaining jobs continue;
+the runner exits with a nonzero status if any job fails.
+
+Open `notebooks/results.ipynb` to compare results. It discovers saved daily
+validation results under `results/`, calculates statistics, and averages them across
+seeds for each model and data source. New model folders are included automatically;
+no shared summary CSV is required.

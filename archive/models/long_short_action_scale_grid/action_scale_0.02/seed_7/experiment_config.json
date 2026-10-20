@@ -1,0 +1,68 @@
+{
+  "experiment_name": "long_short_action_scale_grid/action_scale_0.02/seed_7",
+  "train_model": true,
+  "data": {
+    "feature_path": "../data/processed/market_features.csv.gz",
+    "development_train_fraction": 0.8,
+    "final_holdout_years": 2,
+    "scaling_window_years": 5,
+    "tradable_symbols": [
+      "XLB",
+      "XLE",
+      "XLF",
+      "XLI",
+      "XLK",
+      "XLP",
+      "XLU",
+      "XLV",
+      "XLY"
+    ],
+    "asset_features": [
+      "return_5d",
+      "return_21d",
+      "return_63d",
+      "volatility_21d",
+      "rolling_drawdown_63d",
+      "cross_sectional_rank_return_21d",
+      "market_relative_return_21d",
+      "rolling_market_beta_63d"
+    ],
+    "spy_features": [
+      "return_5d",
+      "return_21d",
+      "return_63d",
+      "volatility_21d",
+      "rolling_drawdown_63d"
+    ],
+    "market_features": [
+      "sector_breadth_above_sma_63d",
+      "sector_return_dispersion_21d",
+      "sector_average_correlation_63d",
+      "vix_level",
+      "vix_return_5d"
+    ]
+  },
+  "environment": {
+    "decision_frequency_days": 5,
+    "action_type": "delta",
+    "action_scale": 0.02,
+    "transaction_cost_rate": 0.0005,
+    "annual_short_borrow_rate": 0.01,
+    "long_exposure": 1.3,
+    "short_exposure": 0.3,
+    "observation_clip": 10.0
+  },
+  "reward": {
+    "name": "after_cost_log_growth",
+    "scale": 100.0
+  },
+  "training": {
+    "algorithm": "PPO",
+    "timesteps": 300000,
+    "episode_years": 5,
+    "learning_rate": 0.0003,
+    "ppo_steps": 2048,
+    "batch_size": 64,
+    "seed": 7
+  }
+}

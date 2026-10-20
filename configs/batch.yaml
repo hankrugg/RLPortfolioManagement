@@ -1,0 +1,20 @@
+# Paths are relative to the project root, regardless of the working directory.
+experiment_configs:
+  - configs/long_only.yaml
+  - configs/long_short_scaled.yaml
+  - configs/long_short_unscaled.yaml
+
+seeds: [42, 123, 2026]
+
+# Sources are already prepared feature CSVs with the same schema as notebook 02.
+# Bootstrap generation is separate; add each generated path here when ready.
+data_sources:
+  - name: historical
+    path: data/processed/market_features.csv.gz
+  # - name: bootstrap_001
+  #   path: data/processed/bootstrap_001.csv.gz
+  #   data_seed: 1  # Optional metadata, independent of the training seeds above.
+
+max_workers: 9
+threads_per_worker: 1
+output_directory: results

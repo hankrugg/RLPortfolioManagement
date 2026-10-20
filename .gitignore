@@ -8,4 +8,5 @@
 *.synctex.gz
 
 data/
+results/
 .DS_Store

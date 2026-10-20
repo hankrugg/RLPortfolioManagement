@@ -5,6 +5,7 @@
 # Data and numerical computing
 numpy==1.26.4
 pandas==2.2.3
+PyYAML==6.0.3
 yfinance==0.2.61
 
 # Reinforcement learning
