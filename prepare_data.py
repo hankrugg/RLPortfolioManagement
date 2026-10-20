@@ -50,6 +50,13 @@ def prepare_data(config_path=DEFAULT_CONFIG, *, raw_file=None):
     metadata = pd.DataFrame([{"symbol": symbol, "tradable": symbol in assets}
                              for symbol in [*assets, *context]])
     validate_symbols(metadata, assets, context)
+    sectors = config.get("sector_symbols")
+    if sectors is not None:
+        validate_symbols(metadata, sectors, context)
+        if len(sectors) < 2 or not set(sectors).issubset(assets):
+            raise ValueError("sector_symbols must contain at least two configured tradable symbols.")
+    if "SHY" in assets and (sectors is None or "SHY" in sectors):
+        raise ValueError("Specify sector_symbols excluding SHY so Treasury data cannot change sector features.")
     if set(context) != {"SPY", "^VIX"}:
         raise ValueError("The current feature builder requires SPY and ^VIX context.")
     start, end = pd.Timestamp(config["start_date"]), pd.Timestamp(config["end_date"])
@@ -81,7 +88,7 @@ def prepare_data(config_path=DEFAULT_CONFIG, *, raw_file=None):
     save_csv(market, raw_path)
     print(f"Saved {len(market):,} validated raw rows: {raw_path}", flush=True)
 
-    featured = build_market_features(market, assets, expected_dates=calendar)
+    featured = build_market_features(market, assets, expected_dates=calendar, sector_symbols=sectors)
     save_csv(featured, processed_path)
     print(f"Saved {len(featured):,} validated feature rows: {processed_path}", flush=True)
     print("Data preparation complete. Training can now load the processed file.", flush=True)

@@ -1,6 +1,6 @@
 # RL Portfolio Management
 
-Train and evaluate PPO agents that allocate a portfolio across nine U.S. sector ETFs. Experiments use YAML configurations, multiple training seeds, and parallel worker processes. The results notebook compares model averages with SPY buy-and-hold and an equal-weight sector portfolio.
+Train and evaluate PPO agents that allocate a portfolio across nine U.S. sector ETFs, optionally adding SHY as a defensive Treasury allocation. Experiments use YAML configurations, multiple training seeds, and parallel worker processes. The results notebook compares model averages with SPY buy-and-hold and an equal-weight sector portfolio.
 
 ## Set up in VS Code
 
@@ -28,6 +28,10 @@ The processed dataset, `data/processed/market_features.csv.gz`, is included in t
 
 The features were built from Yahoo Finance data for the sector ETFs, SPY, and VIX. The original download requests dates from `1999-01-01` through an exclusive end date of `2026-10-01`; usable dates depend on feature availability and scaling windows. Each experiment saves its actual training and validation boundaries in `data_splits.csv`.
 
+The current data-preparation config adds SHY and starts on `2002-08-01`, after its
+July 2002 launch. It writes a separate `market_features_shy.csv.gz`; the original
+included equity dataset remains available for the original batch.
+
 Only `data/processed/` is included in Git. Raw data, intermediate files, and other data folders remain ignored. Earlier download and feature-engineering notebooks are kept in `archive/notebooks/` for reference.
 
 ## Prepare or refresh data
@@ -38,12 +42,12 @@ Edit [configs/data.yaml](configs/data.yaml) to set the date range, tradable symb
 python prepare_data.py
 ```
 
-The script downloads adjusted daily Yahoo Finance observations, normalizes and validates them, and saves `data/raw/yahoo_daily_adjusted.csv.gz`. It then constructs and validates the features and saves `data/processed/market_features.csv.gz`, the historical input already configured for training. Raw data means normalized market observations; processed data contains unscaled features. Scaling and chronological splits remain part of training preparation.
+The script downloads adjusted daily Yahoo Finance observations for the nine equity sectors, SHY, SPY, and VIX, normalizes and validates them, and saves `data/raw/yahoo_daily_adjusted_shy.csv.gz`. It then constructs and validates the features and saves `data/processed/market_features_shy.csv.gz`, the input configured in `configs/batch_shy.yaml`. Yahoo prices are requested with `auto_adjust=True`, so returns include dividend and interest distributions through adjusted prices. Raw data means normalized market observations; processed data contains unscaled features. Scaling and chronological splits remain part of training preparation.
 
 To use another data configuration or rebuild from a saved raw file without downloading:
 
 ```bash
-python prepare_data.py configs/data.yaml --raw-file data/raw/yahoo_daily_adjusted.csv.gz
+python prepare_data.py configs/data.yaml --raw-file data/raw/yahoo_daily_adjusted_shy.csv.gz
 ```
 
 Configured paths resolve from the project root, even when the script is launched from another directory. Each output is replaced only after validation and a complete temporary file write succeed. If feature construction fails, the newly validated raw file remains available and the previous processed file is preserved; the command exits with an error. Successful reruns replace the configured outputs.
@@ -51,6 +55,44 @@ Configured paths resolve from the project root, even when the script is launched
 The script uses historical NYSE sessions (`exchange_calendar: XNYS`) from the pinned `exchange-calendars` dependency. Holidays, weekends, and exceptional closures are excluded explicitly before feature construction, including Yahoo's empty ETF rows on non-session dates. Exclusion counts are logged. A missing required price or observation on an open session raises an error, even if the session is absent from every downloaded series. Early-close days count as sessions. No prices are filled and no missing open-session rows are dropped; expected initial feature warm-up is allowed. Optional `calendar_path` supplies an explicit session CSV with a `date` column instead of the named exchange calendar.
 
 Training validates the processed CSV against the exchange sessions within its date range before preparing arrays. Synthetic datasets can supply an explicit session index; calendar labels must describe the timeline being simulated. The archived notebooks are optional references.
+
+## Equity portfolio with SHY
+
+SHY holds 1–3 year U.S. Treasury notes, rather than Treasury bills. It provides a
+short-duration bond allocation with interest-rate risk; it is not a risk-free
+cash balance. The `tbill` branch uses the traded ETF's adjusted price history.
+There is no backfill before inception or filling of missing open-session prices.
+
+After preparing the data, run the SHY batch:
+
+```bash
+python run.py configs/batch_shy.yaml
+```
+
+This trains `long_short_scaled_shy` using seeds 42, 123, and 2026 with the
+log-growth objective. Results are saved under `results/shy/`. The original
+`configs/batch.yaml` remains the original equity-only experiment batch.
+
+`sector_symbols` in the data config fixes the equity-sector universe. SHY cannot
+change equity percentile ranks, sector breadth, dispersion, or correlation.
+SHY's own rank is the fraction of sector returns at or below its return; its
+other return, volatility, drawdown, and market-relative features use its own
+history. The SHY policy observes the Treasury's features and weight alongside the
+existing equity and market features.
+
+The SHY configuration sets `environment.treasury_symbol: SHY`; the runner resolves
+the asset's index from its configured symbol order. Its action changes the SHY
+allocation by at most `action_scale` (0.1) per five-session decision, with targets
+between zero and 100%. Remaining capital funds the existing equity long-short
+sleeve, so moving into SHY reduces both equity longs and shorts proportionally.
+At a 50% Treasury target, a fully leveraged equity sleeve can hold 65% long
+equities and 15% short equities alongside 50% SHY. SHY cannot be shorted to finance
+equity positions. Weights drift between decisions as usual.
+
+The policy starts fully invested in equal-weight equities, with SHY initially
+zero. Treasury trades incur the same transaction-cost rate; positive SHY holdings
+incur no short-borrow fee. Evaluation CSVs include `weight_SHY` for the Treasury
+model. Neither data preparation nor this batch evaluates the locked final holdout.
 
 ## Configure and run training
 

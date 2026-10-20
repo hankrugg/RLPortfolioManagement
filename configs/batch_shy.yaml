@@ -1,0 +1,12 @@
+experiment_configs:
+  - configs/long_short_scaled_shy.yaml
+
+seeds: [42, 123, 2026]
+
+data_sources:
+  - name: historical
+    path: data/processed/market_features_shy.csv.gz
+
+max_workers: 6
+threads_per_worker: 1
+output_directory: results/shy

@@ -31,6 +31,7 @@ def train_agent(
     annual_short_borrow_rate=0.01,
     reward_scale=100.0,
     trading_days_per_year=252,
+    treasury_index=None,
     device="cpu",
 ):
     model_path = model_directory / "model.zip"
@@ -59,6 +60,7 @@ def train_agent(
             annual_short_borrow_rate=annual_short_borrow_rate,
             reward_scale=reward_scale,
             trading_days_per_year=trading_days_per_year,
+            treasury_index=treasury_index,
         )
     )
     model = PPO(
@@ -95,6 +97,7 @@ def evaluate_agent(
     annual_short_borrow_rate=0.01,
     reward_scale=100.0,
     trading_days_per_year=252,
+    treasury_index=None,
 ):
     validation_environment = SectorAllocationEnv(
         validation_data,
@@ -109,6 +112,7 @@ def evaluate_agent(
         annual_short_borrow_rate=annual_short_borrow_rate,
         reward_scale=reward_scale,
         trading_days_per_year=trading_days_per_year,
+        treasury_index=treasury_index,
     )
     observation, _ = validation_environment.reset(seed=seed)
     validation_records = []

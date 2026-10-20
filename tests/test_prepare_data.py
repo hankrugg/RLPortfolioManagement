@@ -87,6 +87,29 @@ class TestPrepareDataScript(unittest.TestCase):
         download.assert_not_called()
         assert_frame_equal(pd.read_csv(actual_path), expected)
 
+    def test_treasury_is_downloaded_and_saved_with_equity_only_sector_features(self):
+        self.config["tradable_symbols"].append("SHY")
+        self.config["sector_symbols"] = ["XLB", "XLE"]
+        self.wide[("SHY", "Close")] = 100 * np.exp(
+            .0001 * np.arange(100) + .002 * np.sin(np.arange(100) / 5))
+        (raw_path, processed_path), download = self.run_script()
+        self.assertIn("SHY", download.call_args.args[0])
+        raw = pd.read_csv(raw_path, parse_dates=["date"])
+        processed = pd.read_csv(processed_path, parse_dates=["date"])
+        self.assertEqual(len(raw), 500)
+        self.assertTrue(raw.loc[raw["symbol"].eq("SHY"), "tradable"].all())
+        control = data.build_market_features(raw.loc[raw["symbol"].ne("SHY")], ["XLB", "XLE"])
+        assert_frame_equal(processed.loc[processed["symbol"].ne("SHY")].reset_index(drop=True),
+                           control, check_dtype=False, rtol=1e-8, atol=1e-10)
+
+    def test_treasury_cannot_silently_become_part_of_the_sector_universe(self):
+        self.config["tradable_symbols"].append("SHY")
+        self.config_path.write_text(yaml.safe_dump(self.config))
+        with patch.object(data, "download_daily_data") as download:
+            with self.assertRaisesRegex(ValueError, "sector_symbols excluding SHY"):
+                prepare_data.prepare_data(self.config_path)
+            download.assert_not_called()
+
     def test_independent_calendar_is_used_before_saving(self):
         calendar = pd.DataFrame({"date": self.wide.index})
         calendar.to_csv(self.root / "calendar.csv", index=False)

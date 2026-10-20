@@ -44,6 +44,12 @@ def run_one(config, seed, source, run_directory, threads_per_worker):
                 )
                 training = config["training"]
                 environment = dict(config["environment"])
+                treasury_symbol = environment.pop("treasury_symbol", None)
+                if treasury_symbol is not None:
+                    symbols = config["data"]["tradable_symbols"]
+                    if treasury_symbol not in symbols:
+                        raise ValueError("treasury_symbol must be in data.tradable_symbols.")
+                    environment["treasury_index"] = symbols.index(treasury_symbol)
                 environment["reward_scale"] = config["reward"]["scale"]
                 model = train_agent(
                     train_data, split_summary, run_directory, config_path, seed,

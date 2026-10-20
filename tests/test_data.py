@@ -249,6 +249,18 @@ class TestPrepareDatasets(unittest.TestCase):
                     if name != "asset_returns":
                         self.assertTrue((np.abs(split[name]) <= 10).all())
 
+    def test_treasury_and_equity_control_keep_matching_date_splits(self):
+        treasury = self.frame.loc[self.frame["symbol"].eq("XLB")].copy()
+        treasury["symbol"] = "SHY"
+        frame = pd.concat([self.frame, treasury], ignore_index=True)
+        control_train, control_validation, control_splits = self.prepare(frame)
+        train, validation, splits = self.prepare(frame, tradable_symbols=["XLE", "XLB", "SHY"])
+        assert_frame_equal(splits, control_splits)
+        for actual, control in ((train, control_train), (validation, control_validation)):
+            assert_array_equal(actual["dates"], control["dates"])
+            assert_array_equal(actual["asset_returns"][:, :2], control["asset_returns"])
+            self.assertEqual(actual["asset_returns"].shape[1], 3)
+
     def test_returns_keep_configured_asset_order_and_are_not_scaled_or_clipped(self):
         frame = self.frame.copy(deep=True)
         frame.loc[frame["symbol"].eq("XLE"), "return_1d"] = -.2

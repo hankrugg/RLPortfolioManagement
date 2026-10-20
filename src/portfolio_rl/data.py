@@ -67,14 +67,31 @@ def calculate_rolling_drawdown(data, window):
     )
     return data["close"] / rolling_high - 1
 
-def calculate_cross_sectional_rank(data, feature):
-    """Percentile rank among the nine sector ETFs on each date."""
-    return (
+def calculate_cross_sectional_rank(data, feature, *, sector_symbols=None):
+    """Rank sectors among themselves; score other assets against sector returns.
+
+    A non-sector asset receives the fraction of available sector returns at or
+    below its own return. It never changes sector ranks. Require complete peers
+    for that comparison, preserving initial warm-up rather than inventing ranks.
+    Without sector_symbols, retain the original tradable-universe ranks.
+    """
+    peers = data["tradable"] if sector_symbols is None else data["symbol"].isin(sector_symbols)
+    ranks = (
         data[feature]
-        .where(data["tradable"])
+        .where(peers)
         .groupby(data["date"])
         .rank(pct=True)
     )
+    if sector_symbols is not None:
+        panel = data.loc[peers].pivot(index="date", columns="symbol", values=feature)
+        other = data["tradable"] & ~peers
+        for symbol in data.loc[other, "symbol"].unique():
+            values = data.loc[data["symbol"].eq(symbol)].set_index("date")[feature]
+            fractions = panel.le(values, axis=0).mean(axis=1)
+            fractions = fractions.where(panel.notna().all(axis=1) & values.notna())
+            mask = data["symbol"].eq(symbol)
+            ranks.loc[mask] = data.loc[mask, "date"].map(fractions)
+    return ranks
 
 
 def calculate_market_relative_return(data, window):
@@ -199,7 +216,7 @@ def download_market_data(
     return market_data
 
 
-def build_market_features(market_data, tradable_symbols, *, expected_dates=None):
+def build_market_features(market_data, tradable_symbols, *, expected_dates=None, sector_symbols=None):
     """Validate market input, construct standard features, and validate the result.
 
     Use this entry point for downloaded data or a loaded raw CSV. The caller's
@@ -214,17 +231,26 @@ def build_market_features(market_data, tradable_symbols, *, expected_dates=None)
         expected_dates = exchange_sessions(dates.min(), dates.max() + pd.Timedelta(days=1))
     featured_data = select_exchange_sessions(featured_data, expected_dates).reset_index(drop=True)
     validate_market_data(featured_data, tradable_symbols, expected_dates=expected_dates)
+    if "SHY" in tradable_symbols and (sector_symbols is None or "SHY" in sector_symbols):
+        raise ValueError("Specify sector_symbols excluding SHY so Treasury data cannot change sector features.")
+    if sector_symbols is not None:
+        validate_symbols(featured_data, sector_symbols, ["SPY", "^VIX"])
+        if len(sector_symbols) < 2 or not set(sector_symbols).issubset(tradable_symbols):
+            raise ValueError("sector_symbols must contain at least two configured tradable symbols.")
     for window in (1, 5, 21, 63):
         featured_data[f"return_{window}d"] = calculate_simple_return(featured_data, window)
     featured_data["volatility_21d"] = calculate_annualized_volatility(featured_data, 21)
     featured_data["rolling_drawdown_63d"] = calculate_rolling_drawdown(featured_data, 63)
     featured_data["cross_sectional_rank_return_21d"] = calculate_cross_sectional_rank(
-        featured_data, "return_21d")
+        featured_data, "return_21d", sector_symbols=sector_symbols)
     featured_data["market_relative_return_21d"] = calculate_market_relative_return(featured_data, 21)
     featured_data["rolling_market_beta_63d"] = calculate_rolling_market_beta(featured_data, 63)
-    featured_data["sector_breadth_above_sma_63d"] = calculate_sector_breadth(featured_data, 63)
-    featured_data["sector_return_dispersion_21d"] = calculate_sector_return_dispersion(featured_data, 21)
-    featured_data["sector_average_correlation_63d"] = calculate_sector_average_correlation(featured_data, 63)
+    sector_data = featured_data.copy()
+    if sector_symbols is not None:
+        sector_data["tradable"] = sector_data["symbol"].isin(sector_symbols)
+    featured_data["sector_breadth_above_sma_63d"] = calculate_sector_breadth(sector_data, 63)
+    featured_data["sector_return_dispersion_21d"] = calculate_sector_return_dispersion(sector_data, 21)
+    featured_data["sector_average_correlation_63d"] = calculate_sector_average_correlation(sector_data, 63)
     featured_data["vix_level"] = map_context(featured_data, "^VIX", "close")
     featured_data["vix_return_5d"] = map_context(featured_data, "^VIX", "return_5d")
     validate_feature_data(

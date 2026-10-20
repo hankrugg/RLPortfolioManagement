@@ -25,6 +25,7 @@ class SectorAllocationEnv(gym.Env):
         annual_short_borrow_rate=0.01,
         reward_scale=100.0,
         trading_days_per_year=252,
+        treasury_index=None,
     ):
         super().__init__()
         self.dates = dataset["dates"]
@@ -46,6 +47,13 @@ class SectorAllocationEnv(gym.Env):
         self.annual_short_borrow_rate = annual_short_borrow_rate
         self.reward_scale = reward_scale
         self.trading_days_per_year = trading_days_per_year
+        if treasury_index is not None:
+            if (type(treasury_index) is not int or not 0 <= treasury_index < self.n_assets
+                    or self.n_assets < 2):
+                raise ValueError("treasury_index must select one asset alongside at least one equity asset.")
+            if not np.isclose(long_exposure - short_exposure, 1.):
+                raise ValueError("The Treasury allocation requires a fully funded equity sleeve with net exposure one.")
+        self.treasury_index = treasury_index
 
         self.action_space = spaces.Box(
             low=-1, high=1, shape=(self.n_assets,), dtype=np.float32
@@ -85,6 +93,10 @@ class SectorAllocationEnv(gym.Env):
         self.weights = np.full(
             self.n_assets, 1 / self.n_assets, dtype=np.float32
         )
+        if self.treasury_index is not None:
+            # Start with the same equity allocation as the matching control.
+            self.weights[:] = 1 / (self.n_assets - 1)
+            self.weights[self.treasury_index] = 0.
         self.portfolio_value = 1.0
         return self.observation(), {}
 
@@ -97,6 +109,7 @@ class SectorAllocationEnv(gym.Env):
             long_exposure=self.long_exposure,
             short_exposure=self.short_exposure,
             action_type=self.action_type,
+            treasury_index=self.treasury_index,
         )
         if (
             self.action_type == "target"
@@ -238,12 +251,41 @@ def action_to_weights(
     short_exposure,
     *,
     action_type="delta",
+    treasury_index=None,
 ):
-    """Apply a residual action with long-only or long/short exposure limits."""
+    """Apply residual equity actions, optionally allocating to long-only Treasury.
+
+    A Treasury action changes its target weight by action_scale * action, bounded
+    to [0, 1]. Apply the existing equity policy to the remaining sleeve's capital.
+    Thus moving to Treasury scales down equity longs and shorts together, rather
+    than allowing a Treasury short to finance additional equity exposure.
+    """
     if action_type != "delta":
         raise ValueError("action_to_weights currently supports only 'delta' actions.")
     action = np.asarray(action, dtype=np.float64).reshape(-1)
     current_weights = np.asarray(current_weights, dtype=np.float64).reshape(-1)
+    if treasury_index is not None:
+        if (type(treasury_index) is not int or len(current_weights) < 2
+                or not 0 <= treasury_index < len(current_weights)):
+            raise ValueError("treasury_index must select one asset alongside at least one equity asset.")
+        if (action.shape != current_weights.shape or not np.isfinite(action).all()
+                or not np.isfinite(current_weights).all()):
+            raise ValueError("Treasury allocation requires one finite action and weight per asset.")
+        if not np.isclose(long_exposure - short_exposure, 1.):
+            raise ValueError("The Treasury allocation requires net equity exposure one.")
+        treasury_weight = np.clip(current_weights[treasury_index]
+                                  + action_scale * action[treasury_index], 0., 1.)
+        equities = np.arange(len(current_weights)) != treasury_index
+        equity_weights = current_weights[equities]
+        equity_capital = equity_weights.sum()
+        equity_weights = (equity_weights / equity_capital if equity_capital > 1e-8
+                          else np.full(equities.sum(), 1 / equities.sum()))
+        sleeve = action_to_weights(action[equities], equity_weights, action_scale,
+                                   long_exposure, short_exposure, action_type=action_type)
+        weights = np.empty_like(current_weights)
+        weights[treasury_index] = treasury_weight
+        weights[equities] = (1 - treasury_weight) * sleeve
+        return weights.astype(np.float32)
     weight_change = action_scale * (action - action.mean())
     weights = current_weights + weight_change
 

@@ -1,13 +1,16 @@
 # Relative paths resolve from the project root. Yahoo's end date is exclusive.
-start_date: "1999-01-01"
+# SHY launched in July 2002. Use the first full month, with no pre-inception fills.
+start_date: "2002-08-01"
 end_date: "2026-10-01"
 
-tradable_symbols: [XLB, XLE, XLF, XLI, XLK, XLP, XLU, XLV, XLY]
+tradable_symbols: [XLB, XLE, XLF, XLI, XLK, XLP, XLU, XLV, XLY, SHY]
+# Treasury returns must not enter equity-sector breadth, dispersion, or correlation.
+sector_symbols: [XLB, XLE, XLF, XLI, XLK, XLP, XLU, XLV, XLY]
 context_symbols: [SPY, "^VIX"]
 
-raw_path: data/raw/yahoo_daily_adjusted.csv.gz
-# Matches the historical source in configs/batch.yaml.
-processed_path: data/processed/market_features.csv.gz
+raw_path: data/raw/yahoo_daily_adjusted_shy.csv.gz
+# Matches the source in configs/batch_shy.yaml. Preserve the original equity dataset.
+processed_path: data/processed/market_features_shy.csv.gz
 
 # Historical NYSE sessions, including holidays and exceptional closures.
 exchange_calendar: XNYS
