@@ -30,6 +30,28 @@ The features were built from Yahoo Finance data for the sector ETFs, SPY, and VI
 
 Only `data/processed/` is included in Git. Raw data, intermediate files, and other data folders remain ignored. Earlier download and feature-engineering notebooks are kept in `archive/notebooks/` for reference.
 
+## Prepare or refresh data
+
+Edit [configs/data.yaml](configs/data.yaml) to set the date range, tradable symbols, and output paths, then run:
+
+```bash
+python prepare_data.py
+```
+
+The script downloads adjusted daily Yahoo Finance observations, normalizes and validates them, and saves `data/raw/yahoo_daily_adjusted.csv.gz`. It then constructs and validates the features and saves `data/processed/market_features.csv.gz`, the historical input already configured for training. Raw data means normalized market observations; processed data contains unscaled features. Scaling and chronological splits remain part of training preparation.
+
+To use another data configuration or rebuild from a saved raw file without downloading:
+
+```bash
+python prepare_data.py configs/data.yaml --raw-file data/raw/yahoo_daily_adjusted.csv.gz
+```
+
+Configured paths resolve from the project root, even when the script is launched from another directory. Each output is replaced only after validation and a complete temporary file write succeed. If feature construction fails, the newly validated raw file remains available and the previous processed file is preserved; the command exits with an error. Successful reruns replace the configured outputs.
+
+The script uses historical NYSE sessions (`exchange_calendar: XNYS`) from the pinned `exchange-calendars` dependency. Holidays, weekends, and exceptional closures are excluded explicitly before feature construction, including Yahoo's empty ETF rows on non-session dates. Exclusion counts are logged. A missing required price or observation on an open session raises an error, even if the session is absent from every downloaded series. Early-close days count as sessions. No prices are filled and no missing open-session rows are dropped; expected initial feature warm-up is allowed. Optional `calendar_path` supplies an explicit session CSV with a `date` column instead of the named exchange calendar.
+
+Training validates the processed CSV against the exchange sessions within its date range before preparing arrays. Synthetic datasets can supply an explicit session index; calendar labels must describe the timeline being simulated. The archived notebooks are optional references.
+
 ## Configure and run training
 
 Edit [configs/batch.yaml](configs/batch.yaml) to choose experiment configs, seeds, data sources, and concurrency:
@@ -53,7 +75,7 @@ output_directory: results
 
 The runner trains every config × seed × data source combination. This batch creates nine jobs. `max_workers` sets the maximum number of simultaneous experiments; `threads_per_worker` limits the CPU threads available to each worker. Both must be positive integers. Lower `max_workers` if you want to leave more resources available for other work.
 
-Each experiment YAML controls its name, input features, chronological splits, portfolio settings, reward scale, and PPO training settings. The current configs use 300,000 training steps. For a quick workflow check, reduce `training.timesteps`. The rebalance interval is controlled by `environment.decision_frequency_days`, measured in trading days.
+Each experiment YAML controls its name, input features, chronological splits, portfolio settings, reward scale, and PPO training settings. The current configs use 300,000 training steps. For a quick workflow check, reduce `training.timesteps`. All current experiments rebalance every five exchange trading sessions (`environment.decision_frequency_days: 5`). Holidays can shift the weekday and extend calendar time between decisions; early-close sessions still count once. Returns and costs are recorded for every trading session between decisions.
 
 In the VS Code terminal, with the environment activated and the terminal at the **project root**, run:
 
@@ -117,10 +139,13 @@ Use comparable evaluation dates and asset universes when comparing experiments. 
 ```text
 RLPortfolioManagement/
 ├── run.py                  # Batch entry point
+├── prepare_data.py         # Download, validate, and save raw/processed data
 ├── requirements.txt
 ├── configs/                # Batch and experiment YAMLs
 ├── src/portfolio_rl/
 │   ├── data.py             # Data preparation and chronological splits
+│   ├── calendar.py         # Historical exchange sessions and date selection
+│   ├── validation.py       # Market and feature data checks
 │   ├── environment.py      # Portfolio environment, actions, and reward
 │   ├── training.py         # Training and evaluation
 │   └── run.py              # Parallel batch orchestration

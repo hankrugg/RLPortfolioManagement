@@ -7,6 +7,7 @@ numpy==1.26.4
 pandas==2.2.3
 PyYAML==6.0.3
 yfinance==0.2.61
+exchange-calendars==4.11.2
 
 # Reinforcement learning
 gymnasium==0.29.1

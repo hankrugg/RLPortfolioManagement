@@ -1,14 +1,26 @@
-"""
-These are helper functions used to create features the agent is trained on.
-These expect data provided by yahoo finance.
-
-
-
-"""
+"""Download, validate, and construct features for portfolio training."""
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
+
+from .calendar import exchange_sessions, select_exchange_sessions
+from .validation import (
+    FEATURE_BOUNDS, FEATURE_WARMUP_PERIODS,
+    validate_dates, validate_feature_data, validate_market_data, validate_symbols,
+)
+
+
+ASSET_FEATURES = (
+    "return_5d", "return_21d", "return_63d", "volatility_21d",
+    "rolling_drawdown_63d", "cross_sectional_rank_return_21d",
+    "market_relative_return_21d", "rolling_market_beta_63d",
+)
+SPY_FEATURES = ASSET_FEATURES[:5]
+MARKET_FEATURES = (
+    "sector_breadth_above_sma_63d", "sector_return_dispersion_21d",
+    "sector_average_correlation_63d", "vix_level", "vix_return_5d",
+)
 
 def download_daily_data(tickers, start_date, end_date):
     """ Download the data from Yahoo finance for the given tickers, start, and end data"""
@@ -162,29 +174,65 @@ def normalize_yahoo_data(tickers, yahoo_df, symbol_metadata):
     )
     return market_data
 
-def sort_and_dropna(market_data):
-    market_data = (
-    market_data.loc[
-        market_data["close"].notna(),
-        [
-            "date",
-            "symbol",
-            "name",
-            "sector",
-            "tradable",
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume",
-            "dividends",
-            "stock_splits",
-        ],
-    ]
-    .sort_values(["date", "symbol"])
-    .reset_index(drop=True)
-    )
+def sort_market_data(market_data):
+    """Sort by date and symbol without removing rows or columns."""
+    return market_data.sort_values(["date", "symbol"]).reset_index(drop=True)
+
+
+def download_market_data(
+    tradable_symbols, symbol_metadata, start_date, end_date, *,
+    context_symbols=("SPY", "^VIX"), expected_dates=None,
+):
+    """Download, normalize, and validate market data before it can be saved.
+
+    Use NYSE sessions unless expected_dates supplies an explicit calendar. Only
+    non-session rows are excluded; missing data on actual sessions raises errors.
+    """
+    symbols = [*tradable_symbols, *context_symbols]
+    if expected_dates is None:
+        expected_dates = exchange_sessions(start_date, end_date)
+    raw_wide = download_daily_data(symbols, start_date, end_date)
+    market_data = sort_market_data(normalize_yahoo_data(symbols, raw_wide, symbol_metadata))
+    market_data = select_exchange_sessions(market_data, expected_dates).reset_index(drop=True)
+    validate_market_data(market_data, tradable_symbols, context_symbols=context_symbols,
+                         expected_dates=expected_dates)
     return market_data
+
+
+def build_market_features(market_data, tradable_symbols, *, expected_dates=None):
+    """Validate market input, construct standard features, and validate the result.
+
+    Use this entry point for downloaded data or a loaded raw CSV. The caller's
+    table is not modified. Only return a feature table suitable for saving after
+    every required raw and feature check has succeeded.
+    """
+    featured_data = sort_market_data(market_data)
+    validate_dates(featured_data)
+    validate_symbols(featured_data, tradable_symbols, ["SPY", "^VIX"])
+    if expected_dates is None:
+        dates = featured_data.loc[featured_data["symbol"].isin(tradable_symbols), "date"]
+        expected_dates = exchange_sessions(dates.min(), dates.max() + pd.Timedelta(days=1))
+    featured_data = select_exchange_sessions(featured_data, expected_dates).reset_index(drop=True)
+    validate_market_data(featured_data, tradable_symbols, expected_dates=expected_dates)
+    for window in (1, 5, 21, 63):
+        featured_data[f"return_{window}d"] = calculate_simple_return(featured_data, window)
+    featured_data["volatility_21d"] = calculate_annualized_volatility(featured_data, 21)
+    featured_data["rolling_drawdown_63d"] = calculate_rolling_drawdown(featured_data, 63)
+    featured_data["cross_sectional_rank_return_21d"] = calculate_cross_sectional_rank(
+        featured_data, "return_21d")
+    featured_data["market_relative_return_21d"] = calculate_market_relative_return(featured_data, 21)
+    featured_data["rolling_market_beta_63d"] = calculate_rolling_market_beta(featured_data, 63)
+    featured_data["sector_breadth_above_sma_63d"] = calculate_sector_breadth(featured_data, 63)
+    featured_data["sector_return_dispersion_21d"] = calculate_sector_return_dispersion(featured_data, 21)
+    featured_data["sector_average_correlation_63d"] = calculate_sector_average_correlation(featured_data, 63)
+    featured_data["vix_level"] = map_context(featured_data, "^VIX", "close")
+    featured_data["vix_return_5d"] = map_context(featured_data, "^VIX", "return_5d")
+    validate_feature_data(
+        featured_data, tradable_symbols, ASSET_FEATURES, SPY_FEATURES, MARKET_FEATURES,
+        warmup_periods=FEATURE_WARMUP_PERIODS, expected_dates=expected_dates,
+        feature_bounds=FEATURE_BOUNDS,
+    )
+    return featured_data
 
 
 def prepare_datasets(
@@ -199,6 +247,7 @@ def prepare_datasets(
     observation_clip=10.0,
     feature_warmup_periods=None,
     expected_dates=None,
+    exchange_calendar="XNYS",
 ):
     """Prepare the same chronological arrays and splits as notebook 03.
 
@@ -206,10 +255,11 @@ def prepare_datasets(
     separately generated bootstrap path. The final holdout is never evaluated
     by the batch runner. Built-in features use their defined warm-up periods;
     custom features allow no missing values unless feature_warmup_periods declares
-    an allowance. expected_dates can provide an independent trading calendar.
+    an allowance. Validate dates against exchange_calendar unless expected_dates
+    supplies an explicit session calendar. Use exchange_calendar=None only for
+    synthetic timelines that intentionally do not represent exchange dates.
     """
     from .environment import build_feature_panel, scale_rolling, slice_dataset
-    from .validation import FEATURE_BOUNDS, FEATURE_WARMUP_PERIODS, validate_feature_data
 
     if not 0 < development_train_fraction < 1 or final_holdout_years <= 0:
         raise ValueError("Use a train fraction between 0 and 1 and a positive holdout.")
@@ -218,6 +268,12 @@ def prepare_datasets(
         raise ValueError("The scaling window must contain at least two trading days.")
 
     market_data = pd.read_csv(feature_path, parse_dates=["date"])
+    if expected_dates is None and exchange_calendar is not None:
+        validate_dates(market_data)
+        validate_symbols(market_data, tradable_symbols, ["SPY"])
+        dates = market_data.loc[market_data["symbol"].isin(tradable_symbols), "date"]
+        expected_dates = exchange_sessions(dates.min(), dates.max() + pd.Timedelta(days=1),
+                                           exchange_calendar)
     requested = list(dict.fromkeys([*asset_features, *spy_features, *market_features, "return_1d"]))
     warmups = {column: FEATURE_WARMUP_PERIODS.get(column, 0) for column in requested}
     if feature_warmup_periods is not None:
@@ -243,7 +299,7 @@ def prepare_datasets(
         .reindex(columns=tradable_symbols).sort_index()
     )
     calendar = (
-        returns_panel.dropna().index.intersection(asset_panel.index)
+        returns_panel.index.intersection(asset_panel.index)
         .intersection(spy_panel.index).intersection(market_panel.index).sort_values()
     )
     asset_panel = asset_panel.reindex(calendar)
@@ -253,6 +309,7 @@ def prepare_datasets(
         asset_panel.notna().all(axis=1)
         & spy_panel.notna().all(axis=1)
         & market_panel.notna().all(axis=1)
+        & returns_panel.reindex(calendar).notna().all(axis=1)
     )
     if not complete.any():
         raise ValueError("No dates have all requested features.")

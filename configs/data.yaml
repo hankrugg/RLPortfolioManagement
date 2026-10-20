@@ -1,0 +1,15 @@
+# Relative paths resolve from the project root. Yahoo's end date is exclusive.
+start_date: "1999-01-01"
+end_date: "2026-10-01"
+
+tradable_symbols: [XLB, XLE, XLF, XLI, XLK, XLP, XLU, XLV, XLY]
+context_symbols: [SPY, "^VIX"]
+
+raw_path: data/raw/yahoo_daily_adjusted.csv.gz
+# Matches the historical source in configs/batch.yaml.
+processed_path: data/processed/market_features.csv.gz
+
+# Historical NYSE sessions, including holidays and exceptional closures.
+exchange_calendar: XNYS
+# Optional explicit session CSV with a date column; overrides the named calendar.
+calendar_path: null

@@ -6,7 +6,7 @@ experiment_configs:
 
 seeds: [42, 123, 2026]
 
-# Sources are already prepared feature CSVs with the same schema as notebook 02.
+# Sources are feature CSVs created by prepare_data.py or an equivalent validated workflow.
 # Bootstrap generation is separate; add each generated path here when ready.
 data_sources:
   - name: historical

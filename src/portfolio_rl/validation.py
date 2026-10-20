@@ -43,17 +43,23 @@ def _names(values, label, *, allow_empty=True):
 def _calendar(data, tradable_symbols, expected_dates):
     dates = (pd.DatetimeIndex(data.loc[data["symbol"].isin(tradable_symbols), "date"])
              .unique().sort_values() if expected_dates is None else expected_dates)
-    if (not isinstance(dates, pd.DatetimeIndex) or dates.empty or dates.hasnans
-            or not dates.is_unique or not dates.is_monotonic_increasing
-            or not dates.equals(dates.normalize())):
-        raise ValueError("expected_dates must be nonempty, unique, chronological daily dates.")
-    if dates.tz != data["date"].dt.tz:
-        raise ValueError("expected_dates and data must use the same timezone.")
+    validate_expected_dates(dates, timezone=data["date"].dt.tz)
     return dates
 
 
 def _examples(rows):
     return rows[["date", "symbol"]].head(3).to_dict("records")
+
+
+def validate_expected_dates(expected_dates, *, timezone=None):
+    """Require nonempty, unique, chronological daily labels with the given timezone."""
+    if (not isinstance(expected_dates, pd.DatetimeIndex) or expected_dates.empty
+            or expected_dates.hasnans or not expected_dates.is_unique
+            or not expected_dates.is_monotonic_increasing
+            or not expected_dates.equals(expected_dates.normalize())):
+        raise ValueError("expected_dates must be nonempty, unique, chronological daily dates.")
+    if expected_dates.tz != timezone:
+        raise ValueError("expected_dates and data must use the same timezone.")
 
 
 def validate_market_data(

@@ -6,6 +6,7 @@ Run from the project root: python -m unittest discover -s tests -v
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -35,6 +36,91 @@ def assert_dataset_equal(test, actual, expected):
     test.assertEqual(set(actual), set(expected))
     for name in expected:
         assert_array_equal(actual[name], expected[name], err_msg=name)
+
+
+class TestMarketDataPipeline(unittest.TestCase):
+    def setUp(self):
+        self.symbols = ["XLB", "XLE"]
+        dates = data.exchange_sessions("2024-01-04", "2024-07-01")[:100]
+        self.end_date = (dates[-1] + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        self.market = pd.DataFrame([
+            {"date": date, "symbol": symbol, "tradable": symbol in self.symbols,
+             "close": 100 * np.exp(.001 * i + .01 * np.sin(i / (position + 2)))}
+            for i, date in enumerate(dates)
+            for position, symbol in enumerate([*self.symbols, "SPY", "^VIX"])
+        ])
+
+    def test_sorting_preserves_missing_prices_all_rows_and_extra_columns(self):
+        frame = self.market.iloc[:12].sample(frac=1, random_state=42)
+        frame.loc[frame.index[0], "close"] = np.nan
+        frame["notes"] = "retain"
+        original = frame.copy(deep=True)
+        result = data.sort_market_data(frame)
+        self.assertEqual(len(result), len(frame))
+        self.assertEqual(result["close"].isna().sum(), 1)
+        self.assertIn("notes", result.columns)
+        assert_frame_equal(result, original.sort_values(["date", "symbol"]).reset_index(drop=True))
+        assert_frame_equal(frame, original)
+
+    def test_download_normalizes_sorts_and_validates_before_returning(self):
+        wide = pd.concat({symbol: rows.set_index("date")[["close"]].rename(columns={"close": "Close"})
+                          for symbol, rows in self.market.groupby("symbol")}, axis=1).iloc[::-1]
+        metadata = self.market[["symbol", "tradable"]].drop_duplicates().reset_index(drop=True)
+        original = wide.copy(deep=True)
+        with patch.object(data, "download_daily_data", return_value=wide) as download:
+            result = data.download_market_data(self.symbols, metadata, "2024-01-04", self.end_date)
+        download.assert_called_once_with(["XLB", "XLE", "SPY", "^VIX"],
+                                         "2024-01-04", self.end_date)
+        expected = self.market.sort_values(["date", "symbol"]).reset_index(drop=True)
+        assert_frame_equal(result, expected, check_like=True)
+        assert_frame_equal(wide, original)
+
+    def test_download_does_not_discard_a_missing_price(self):
+        wide = pd.concat({symbol: rows.set_index("date")[["close"]].rename(columns={"close": "Close"})
+                          for symbol, rows in self.market.groupby("symbol")}, axis=1)
+        wide.loc[wide.index[10], ("XLB", "Close")] = np.nan
+        metadata = self.market[["symbol", "tradable"]].drop_duplicates().reset_index(drop=True)
+        with patch.object(data, "download_daily_data", return_value=wide):
+            with self.assertRaisesRegex(ValueError, "close contains nonfinite"):
+                data.download_market_data(self.symbols, metadata, "2024-01-04", self.end_date)
+
+    def test_construction_preserves_inputs_and_expected_warmup(self):
+        original = self.market.copy(deep=True)
+        result = data.build_market_features(self.market, self.symbols)
+        self.assertEqual(len(result), len(self.market))
+        self.assertTrue(set(data.FEATURE_WARMUP_PERIODS).issubset(result.columns))
+        asset = result.loc[result["symbol"].eq("XLB")]
+        self.assertTrue(asset["return_63d"].iloc[:63].isna().all())
+        self.assertTrue(asset[list(data.ASSET_FEATURES)].iloc[63:].notna().all().all())
+        assert_allclose(result["vix_level"],
+                        result["date"].map(self.market.loc[self.market["symbol"].eq("^VIX")]
+                                           .set_index("date")["close"]))
+        assert_frame_equal(self.market, original)
+
+    def test_construction_accepts_shuffled_input_without_changing_results(self):
+        expected = data.build_market_features(self.market, self.symbols)
+        actual = data.build_market_features(self.market.sample(frac=1, random_state=42), self.symbols)
+        assert_frame_equal(actual, expected)
+
+    def test_invalid_market_data_stops_before_feature_calculation(self):
+        frame = self.market.copy(deep=True)
+        frame.loc[40, "close"] = np.nan
+        with patch.object(data, "calculate_simple_return") as calculate:
+            with self.assertRaisesRegex(ValueError, "close contains nonfinite"):
+                data.build_market_features(frame, self.symbols)
+            calculate.assert_not_called()
+
+    def test_invalid_generated_features_are_rejected_before_returning(self):
+        invalid = pd.Series(np.inf, index=self.market.index)
+        with patch.object(data, "calculate_rolling_drawdown", return_value=invalid):
+            with self.assertRaisesRegex(ValueError, "rolling_drawdown_63d contains nonfinite"):
+                data.build_market_features(self.market, self.symbols)
+
+    def test_independent_calendar_reaches_raw_validation(self):
+        dates = pd.DatetimeIndex(self.market["date"].unique())
+        frame = self.market.loc[~self.market["date"].eq(dates[10])]
+        with self.assertRaisesRegex(ValueError, "Missing trading dates"):
+            data.build_market_features(frame, self.symbols, expected_dates=dates)
 
 
 class TestFeaturePanel(unittest.TestCase):
@@ -138,6 +224,8 @@ class TestPrepareDatasets(unittest.TestCase):
             "final_holdout_years": 1,
             "scaling_window_years": 3 / 252,
             "observation_clip": 10.,
+            # These arithmetic fixtures intentionally use a synthetic weekday calendar.
+            "expected_dates": self.dates,
         }
 
     def prepare(self, frame=None, **overrides):
@@ -223,6 +311,14 @@ class TestPrepareDatasets(unittest.TestCase):
         frame.loc[frame["date"].isin(self.dates[:2]), "signal"] = np.nan
         train, _, _ = self.prepare(frame, feature_warmup_periods={"signal": 2})
         self.assertEqual(train["dates"][0], self.dates[5].to_datetime64())
+
+    def test_initial_return_warmup_is_trimmed_without_skipping_later_dates(self):
+        frame = self.frame.copy(deep=True)
+        frame.loc[frame["date"].eq(self.dates[0]), "return_1d"] = np.nan
+        train, validation, _ = self.prepare(frame)
+        cutoff = self.dates[-1] - pd.DateOffset(years=1)
+        expected = self.dates[4:][self.dates[4:] <= cutoff]
+        assert_array_equal(np.concatenate([train["dates"], validation["dates"]]), expected.to_numpy())
 
     def test_extra_context_dates_and_unused_columns_do_not_change_outputs(self):
         expected = self.prepare()
