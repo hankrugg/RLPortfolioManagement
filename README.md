@@ -1,21 +1,12 @@
 # RL Portfolio Management
 
-Train and evaluate a reinforcement learning agent that allocates a portfolio across nine U.S. sector ETFs. The project uses PPO from Stable-Baselines3, daily market data from Yahoo Finance, and configurable trading and short-borrowing costs. Saved model results can be compared with SPY buy-and-hold and an equal-weight sector portfolio.
+Train and evaluate PPO agents that allocate a portfolio across nine U.S. sector ETFs. Experiments use YAML configurations, multiple training seeds, and parallel worker processes. The results notebook compares model averages with SPY buy-and-hold and an equal-weight sector portfolio.
 
-## 1. Download the project
+## Set up in VS Code
 
-Download and extract the repository ZIP, or clone it:
-
-```bash
-git clone https://github.com/hankrugg/RLPortfolioManagement.git
-cd RLPortfolioManagement
-```
-
-If you downloaded a ZIP, open a terminal in the extracted project folder, where `requirements.txt` is located. Git is only needed for the clone option.
-
-## 2. Install the dependencies
-
-Use **Python 3.11**, the version specified in `requirements.txt`. The commands below use Conda, available through Miniconda or Anaconda, to create a separate environment. They work in a terminal on macOS/Linux or an Anaconda Prompt on Windows.
+1. Clone or download this repository, then use **File → Open Folder** in VS Code to open `RLPortfolioManagement`, the folder containing `run.py` and `requirements.txt`.
+2. Install Microsoft's **Python** and **Jupyter** extensions in VS Code.
+3. Install Miniconda or Anaconda if you do not already have Conda. Open **Terminal → New Terminal** and create a Python 3.11 environment:
 
 ```bash
 conda create -n rl-portfolio python=3.11 -y
@@ -25,142 +16,126 @@ python -m pip install -r requirements.txt
 python -m ipykernel install --user --name rl-portfolio --display-name "Python (rl-portfolio)"
 ```
 
-If you already have an isolated Python 3.11 environment, activate it and run the three `python -m ...` installation commands above.
+If you already have an isolated Python 3.11 environment, activate it and run the three `python -m ...` commands above. If `conda` is unavailable in the VS Code terminal, run the setup in an Anaconda Prompt or a terminal where Conda works, then reopen VS Code.
 
-The requirements file pins NumPy, pandas, yfinance, Gymnasium, Stable-Baselines3, PyTorch, Matplotlib, JupyterLab, and ipykernel. An internet connection is needed to install packages and download market data.
+4. Open the Command Palette (**Cmd+Shift+P** on macOS or **Ctrl+Shift+P** on Windows/Linux), run **Python: Select Interpreter**, and choose `rl-portfolio`. Open a new terminal and activate that environment before running training.
 
-## 3. Start JupyterLab
+VS Code documents [interpreter selection](https://code.visualstudio.com/docs/python/environments#_select-an-environment) and [notebook execution](https://code.visualstudio.com/docs/datascience/jupyter-notebooks).
 
-From the project folder, with the environment activated:
+## Included data
 
-```bash
-cd notebooks
-python -m jupyterlab
+The processed dataset, `data/processed/market_features.csv.gz`, is included in the repository. You can train directly from this file without downloading market data or running the old preparation notebooks. An internet connection is needed to install dependencies, but the default training batch uses the local dataset.
+
+The features were built from Yahoo Finance data for the sector ETFs, SPY, and VIX. The original download requests dates from `1999-01-01` through an exclusive end date of `2026-10-01`; usable dates depend on feature availability and scaling windows. Each experiment saves its actual training and validation boundaries in `data_splits.csv`.
+
+Only `data/processed/` is included in Git. Raw data, intermediate files, and other data folders remain ignored. Earlier download and feature-engineering notebooks are kept in `archive/notebooks/` for reference.
+
+## Configure and run training
+
+Edit [configs/batch.yaml](configs/batch.yaml) to choose experiment configs, seeds, data sources, and concurrency:
+
+```yaml
+experiment_configs:
+  - configs/long_only.yaml
+  - configs/long_short_scaled.yaml
+  - configs/long_short_unscaled.yaml
+
+seeds: [42, 123, 2026]
+
+data_sources:
+  - name: historical
+    path: data/processed/market_features.csv.gz
+
+max_workers: 9
+threads_per_worker: 1
+output_directory: results
 ```
 
-Open the notebooks in JupyterLab and select **Python (rl-portfolio)** as the kernel. In each notebook, run all cells from top to bottom and wait for it to finish before moving to the next notebook.
+The runner trains every config × seed × data source combination. This batch creates nine jobs. `max_workers` sets the maximum number of simultaneous experiments; `threads_per_worker` limits the CPU threads available to each worker. Both must be positive integers. Lower `max_workers` if you want to leave more resources available for other work.
 
-**Keep `notebooks/` as the working directory.** Paths such as `../data/` and `../models/` are relative to this folder, so the project can be downloaded anywhere without editing machine-specific paths. If using VS Code or another notebook editor, make sure its notebook working directory is also `notebooks/`.
+Each experiment YAML controls its name, input features, chronological splits, portfolio settings, reward scale, and PPO training settings. The current configs use 300,000 training steps. For a quick workflow check, reduce `training.timesteps`. The rebalance interval is controlled by `environment.decision_frequency_days`, measured in trading days.
 
-## 4. Run the notebooks in order
-
-| Order | Notebook | What it does | Main output |
-| --- | --- | --- | --- |
-| 1 | [01_download_data.ipynb](notebooks/01_download_data.ipynb) | Downloads adjusted daily prices for the nine sector ETFs, SPY, and VIX. | `data/raw/yahoo_daily_adjusted.csv.gz` |
-| 2 | [02_feature_engineering.ipynb](notebooks/02_feature_engineering.ipynb) | Builds the price, relative-performance, and market-regime features. | `data/processed/market_features.csv.gz` |
-| 3 | [03_train_portfolio_agent_daily.ipynb](notebooks/03_train_portfolio_agent_daily.ipynb) | Trains one PPO agent per configured seed, then evaluates each on development validation. | `models/<experiment_name>/seed_<seed>/` and a validation summary |
-| 4 | [04_benchmark_analysis.ipynb](notebooks/04_benchmark_analysis.ipynb) | Compares saved validation results against SPY and an equal-weight sector portfolio. | Performance tables and plots displayed in the notebook |
-
-The `data/` folder is excluded from Git and is **not included in a fresh download**. Run notebooks 01 and 02 to generate it; the notebooks create their output directories as needed.
-
-Notebook 01 currently requests data from `1999-01-01` through an exclusive end date of `2026-10-01`. Keep these settings when comparing with the included model results. Changing the date range can change the training/validation splits and make existing saved results incompatible with the new data.
-
-### Training settings
-
-Before running notebook 03, review [notebooks/experiment_config.py](notebooks/experiment_config.py). It controls the experiment name, whether to train, seeds, training duration, portfolio constraints, costs, and reward function.
-
-The current defaults are:
-
-```python
-"experiment_name": "long_short_scaled"
-"train_model": True
-# Inside "training":
-"seeds": [42]
-"timesteps": 300_000
-```
-
-Training takes longer than data preparation and analysis; runtime depends on your hardware and the number of seeds. Reducing `training.timesteps` can help check the workflow, but produces a different model.
-
-With `train_model=True`, notebook 03 saves checkpoints and validation files under the configured experiment and seed, replacing existing files at those locations. Use a new `experiment_name` to preserve the included models. Each seed folder contains:
-
-- `model.zip`: the PPO checkpoint.
-- `experiment_config.py`: the configuration and portfolio/reward functions used for training.
-- `data_splits.csv`: the chronological dataset boundaries.
-- `validation_results.csv`: daily validation returns, costs, exposures, and weights.
-- `validation_metrics.csv`: summary validation metrics.
-
-To evaluate an existing checkpoint without retraining, set `train_model=False` and use the experiment name, seeds, and configuration matching that checkpoint. Validation files are still regenerated. Restart the kernel and run all cells after changing `experiment_config.py`, so Python loads the updated settings.
-
-### Compare the included results without retraining
-
-For a faster first run, complete **01 → 02 → 04**, skipping notebook 03. The repository includes saved validation results for `long_only`, `long_short`, and `long_short_scaled`.
-
-Notebook 04 selects strategies through `MODELS_TO_COMPARE`. It reads each model's saved CSV files directly, looking in the model folder first and then in `seed_42/`. It also uses `models/long_only/validation_results.csv` for the benchmark dates. Keep that file available and compare models evaluated on the same dates.
-
-If you train a new experiment with seed 42, add its experiment name to `MODELS_TO_COMPARE`. For another seed, adjust the model-loading path in notebook 04 to the corresponding `seed_<seed>/` folder.
-
-### Optional exploratory notebook
-
-If your download includes `06_sector_stock_fund_preliminary.ipynb`, run it after notebooks 01 and 02 and after ensuring the `long_short_scaled/seed_42` checkpoint and its saved configuration are available. It reuses the frozen allocator with stock baskets and downloads additional Yahoo Finance data. It is separate from the main 01–04 workflow; no notebook 05 is required.
-
-## Project layout
-
-```text
-RLPortfolioManagement/
-├── requirements.txt
-├── notebooks/            # Run the notebooks from this folder
-│   ├── 01_download_data.ipynb
-│   ├── 02_feature_engineering.ipynb
-│   ├── 03_train_portfolio_agent_daily.ipynb
-│   ├── 04_benchmark_analysis.ipynb
-│   └── experiment_config.py
-├── data/                 # Generated locally; excluded from Git
-│   ├── raw/
-│   └── processed/
-├── models/               # Checkpoints, configurations, and validation CSVs
-└── docs/                 # Project report
-```
-
-## Troubleshooting
-
-- **`ModuleNotFoundError`:** Select the `Python (rl-portfolio)` kernel. Install dependencies with the same environment activated, then restart the kernel.
-- **Missing raw or feature data:** Run notebook 01, then 02. Confirm the notebook working directory is `notebooks/`; `Path.cwd()` in a notebook cell shows it.
-- **Missing model or validation files:** Check the experiment name and seed. Train the checkpoint with notebook 03, or select one of the included experiments in notebook 04.
-- **Yahoo Finance download errors or missing symbols:** Check your connection and retry notebook 01 after a pause. Wait for a complete dataset before continuing to feature engineering.
-- **Dependency installation fails on a different Python version:** Create a fresh Python 3.11 environment and install `requirements.txt` again.
-
-Saved notebook outputs show earlier runs; rerun the cells to generate results for your environment. The comparisons use development validation, while the final two-year holdout is reserved by the training workflow. Fresh downloads and retraining may produce different results from the saved outputs.
-
-## Run parallel experiments with YAML
-
-After installing `requirements.txt` and preparing the feature file with notebooks 01
-and 02, edit `configs/batch.yaml` and start the batch from the project folder:
+In the VS Code terminal, with the environment activated and the terminal at the **project root**, run:
 
 ```bash
 python run.py
 ```
 
-The batch lists experiment YAML files, training seeds, and named data sources. The
-runner executes every config × seed × source combination, with at most
-`max_workers` independent processes. `threads_per_worker` limits the numerical
-threads each process uses. The supplied batch runs nine jobs: long-only and two
-long/short action-scale configurations, each with three seeds on the historical
-dataset. Concurrency follows `max_workers` in the batch YAML.
-Each job defaults to 300,000 training steps on the CPU.
+There is no need to switch into `src/` or launch the archived training notebook. The terminal reports each job as it finishes; detailed training output is written to its `run.log`. Keep the process running until the batch finishes.
 
-All configured paths are relative to the project root. A different batch file is
-optional: `python run.py configs/another_batch.yaml`. Its paths follow the same rule.
+To use a different batch file:
 
-Each source points to an existing feature CSV (including `.csv.gz`) with the same
-columns as notebook 02's output. To test bootstrapped paths later, generate their
-features separately and add their file paths and unique names to `data_sources`.
-An optional `data_seed` is saved as metadata; the runner does not generate
-bootstrap paths. The batch's `seeds` control training randomness independently.
+```bash
+python run.py configs/another_batch.yaml
+```
 
-Inputs are aligned, scaled using preceding observations, and split chronologically
-using the original training procedure. Each worker prepares its inputs in memory;
-no shared prepared-data folder is written. The final holdout remains excluded from
-training and validation.
+Configured relative paths are resolved from the project root. Each worker prepares its inputs in memory, including scaling and chronological splits. The final holdout is excluded from training and development validation.
 
-Results are saved directly under `results/`. Each
-`results/<experiment>/<source>/seed_<seed>/` directory contains the model, resolved YAML,
-split dates, daily validation returns and weights, summary metrics, and `run.log`.
-The runner prints each job's status as it finishes. Rerunning the same
-experiment/source/seed overwrites its saved outputs.
-Ordinary job failures are recorded in their logs while the remaining jobs continue;
-the runner exits with a nonzero status if any job fails.
+To add another experiment, copy an experiment YAML, give it a unique `experiment_name`, change the settings, and add its path to `experiment_configs`. The current trainer supports PPO and the `after_cost_log_growth` reward. For alternative or bootstrapped data, add a uniquely named source pointing to a feature CSV with the same schema as the included dataset. Bootstrap generation is separate; the batch seeds control training randomness.
 
-Open `notebooks/results.ipynb` to compare results. It discovers saved daily
-validation results under `results/`, calculates statistics, and averages them across
-seeds for each model and data source. New model folders are included automatically;
-no shared summary CSV is required.
+## Saved results
+
+The runner creates the output folders automatically:
+
+```text
+results/
+├── batch.yaml
+└── <experiment>/
+    └── <data_source>/
+        └── seed_<seed>/
+            ├── model.zip
+            ├── experiment_config.yaml
+            ├── data_splits.csv
+            ├── validation_results.csv
+            ├── validation_metrics.csv
+            └── run.log
+```
+
+`validation_results.csv` contains daily evaluation returns, portfolio weights, turnover, costs, and exposures. `validation_metrics.csv` contains that run's metrics. There is no shared summary CSV or prepared-data directory. Generated results are ignored by Git.
+
+Rerunning the same experiment/source/seed replaces its saved outputs. Use a new experiment name or output location if you want to preserve an earlier version. Ordinary job failures are recorded in the job's log while the remaining jobs continue; the runner exits with a nonzero status if any job fails.
+
+## View results in VS Code
+
+1. After training finishes, open [notebooks/results.ipynb](notebooks/results.ipynb).
+2. Click **Select Kernel** in the upper-right corner and choose the `rl-portfolio` environment or **Python (rl-portfolio)** kernel.
+3. Click **Run All** to load the saved results and regenerate the table and plots.
+
+The notebook discovers `results/<experiment>/<data_source>/seed_*/validation_results.csv` files and reads their saved experiment configs. It calculates summary statistics directly from daily results, then averages them across seeds for each model and data source. New model folders are included automatically when you rerun all cells.
+
+It displays:
+
+- Average summary statistics for each model, plus SPY and equal weight.
+- Cumulative returns averaged across seeds, compared with both benchmarks.
+- Drawdowns of those average return curves and benchmarks.
+- A separate average portfolio weights plot for each model and data source.
+
+Use comparable evaluation dates and asset universes when comparing experiments. The notebook uses the first discovered run to establish benchmark data and settings. If you change the output location in the batch YAML, update `run_directory` near the top of the notebook too. Its default paths work when the notebook's working directory is either the project root or `notebooks/`.
+
+## Project layout
+
+```text
+RLPortfolioManagement/
+├── run.py                  # Batch entry point
+├── requirements.txt
+├── configs/                # Batch and experiment YAMLs
+├── src/portfolio_rl/
+│   ├── data.py             # Data preparation and chronological splits
+│   ├── environment.py      # Portfolio environment, actions, and reward
+│   ├── training.py         # Training and evaluation
+│   └── run.py              # Parallel batch orchestration
+├── data/processed/         # Included feature dataset
+├── notebooks/results.ipynb # Results table and plots
+├── results/                # Generated models and evaluation files; ignored by Git
+├── archive/                # Earlier notebooks and models
+└── docs/                   # Project report
+```
+
+## Troubleshooting
+
+- **Missing Python package:** Activate `rl-portfolio`, install `requirements.txt`, and select the same environment for the VS Code interpreter and notebook kernel. Restart the kernel after installing packages.
+- **No results found:** Complete at least one training run and check that the notebook points to the correct output directory.
+- **Missing feature data:** Check that `data/processed/market_features.csv.gz` is present and that the batch source path points to it.
+- **Training failed:** Open the affected seed folder's `run.log` for the error.
+- **Computer becomes sluggish:** Reduce `max_workers`; increasing worker or thread counts does not always improve speed.
+- **Dependency installation fails:** Use a fresh Python 3.11 environment, the version used for this project's pinned dependencies.
