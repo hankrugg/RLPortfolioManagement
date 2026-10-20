@@ -197,14 +197,19 @@ def prepare_datasets(
     final_holdout_years=2,
     scaling_window_years=5,
     observation_clip=10.0,
+    feature_warmup_periods=None,
+    expected_dates=None,
 ):
     """Prepare the same chronological arrays and splits as notebook 03.
 
     Any prepared feature CSV with the same columns can be used, including a
     separately generated bootstrap path. The final holdout is never evaluated
-    by the batch runner.
+    by the batch runner. Built-in features use their defined warm-up periods;
+    custom features allow no missing values unless feature_warmup_periods declares
+    an allowance. expected_dates can provide an independent trading calendar.
     """
     from .environment import build_feature_panel, scale_rolling, slice_dataset
+    from .validation import FEATURE_BOUNDS, FEATURE_WARMUP_PERIODS, validate_feature_data
 
     if not 0 < development_train_fraction < 1 or final_holdout_years <= 0:
         raise ValueError("Use a train fraction between 0 and 1 and a positive holdout.")
@@ -213,8 +218,19 @@ def prepare_datasets(
         raise ValueError("The scaling window must contain at least two trading days.")
 
     market_data = pd.read_csv(feature_path, parse_dates=["date"])
-    if market_data.duplicated(["date", "symbol"]).any():
-        raise ValueError("Feature data contains duplicate date/symbol rows.")
+    requested = list(dict.fromkeys([*asset_features, *spy_features, *market_features, "return_1d"]))
+    warmups = {column: FEATURE_WARMUP_PERIODS.get(column, 0) for column in requested}
+    if feature_warmup_periods is not None:
+        if not isinstance(feature_warmup_periods, dict):
+            raise ValueError("feature_warmup_periods must map feature names to session counts.")
+        if set(feature_warmup_periods) - set(requested):
+            raise ValueError("feature_warmup_periods contains unrequested feature names.")
+        warmups.update(feature_warmup_periods)
+    validate_feature_data(
+        market_data, tradable_symbols, asset_features, spy_features, market_features,
+        warmup_periods=warmups, expected_dates=expected_dates,
+        feature_bounds={column: FEATURE_BOUNDS[column] for column in requested if column in FEATURE_BOUNDS},
+    )
     asset_panel = build_feature_panel(market_data, tradable_symbols, asset_features)
     spy_panel = build_feature_panel(market_data, ["SPY"], spy_features)
     market_panel = (
@@ -260,6 +276,11 @@ def prepare_datasets(
         & spy_panel.notna().all(axis=1)
         & market_panel.notna().all(axis=1)
     )
+    if complete.any():
+        first_complete = np.flatnonzero(complete.to_numpy())[0]
+        if not complete.iloc[first_complete:].all():
+            invalid_dates = calendar[first_complete:][~complete.iloc[first_complete:].to_numpy()]
+            raise ValueError(f"Undefined scaled features interrupt daily history: {invalid_dates[:3].tolist()}.")
     calendar = calendar[complete]
     dataset = {
         "dates": calendar.to_numpy(),

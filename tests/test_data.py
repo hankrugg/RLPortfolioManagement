@@ -1,7 +1,6 @@
 """Offline tests for data preparation, scaling, and chronological splits.
 
 Run from the project root: python -m unittest discover -s tests -v
-Expected failures identify data-safety checks not yet enforced by the pipeline.
 """
 
 from pathlib import Path
@@ -222,7 +221,7 @@ class TestPrepareDatasets(unittest.TestCase):
     def test_leading_missing_features_are_removed_before_scaling_warmup(self):
         frame = self.frame.copy(deep=True)
         frame.loc[frame["date"].isin(self.dates[:2]), "signal"] = np.nan
-        train, _, _ = self.prepare(frame)
+        train, _, _ = self.prepare(frame, feature_warmup_periods={"signal": 2})
         self.assertEqual(train["dates"][0], self.dates[5].to_datetime64())
 
     def test_extra_context_dates_and_unused_columns_do_not_change_outputs(self):
@@ -307,7 +306,7 @@ class TestPrepareDatasets(unittest.TestCase):
     def test_all_missing_features_are_rejected(self):
         frame = self.frame.copy(deep=True)
         frame["signal"] = np.nan
-        with self.assertRaisesRegex(ValueError, "No dates have all requested features"):
+        with self.assertRaisesRegex(ValueError, "Missing signal beyond"):
             self.prepare(frame)
 
     def test_nonnumeric_feature_values_are_rejected(self):
@@ -335,28 +334,33 @@ class TestPrepareDatasets(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     self.prepare(**settings)
 
-    @unittest.expectedFailure
     def test_interior_missing_returns_are_rejected_to_preserve_daily_continuity(self):
-        # Known gap: the current pipeline silently drops the affected trading date.
         frame = self.frame.copy(deep=True)
         frame.loc[frame["date"].eq(self.dates[100]), "return_1d"] = np.nan
         with self.assertRaises(ValueError):
             self.prepare(frame)
 
-    @unittest.expectedFailure
     def test_interior_missing_features_are_rejected_to_preserve_daily_continuity(self):
-        # Known gap: rolling scaling drops this date and subsequent affected dates.
         frame = self.frame.copy(deep=True)
         frame.loc[frame["date"].eq(self.dates[100]), "signal"] = np.nan
         with self.assertRaises(ValueError):
             self.prepare(frame)
 
-    @unittest.expectedFailure
     def test_infinite_features_are_rejected_before_clipping(self):
-        # Known gap: infinity can be clipped into a finite, apparently valid input.
         frame = self.frame.copy(deep=True)
         frame.loc[frame["date"].eq(self.dates[100]), "signal"] = np.inf
         with self.assertRaises(ValueError):
+            self.prepare(frame)
+
+    def test_missing_entire_session_is_rejected_with_an_independent_calendar(self):
+        frame = self.frame.loc[~self.frame["date"].eq(self.dates[100])]
+        with self.assertRaisesRegex(ValueError, "Missing trading dates"):
+            self.prepare(frame, expected_dates=self.dates)
+
+    def test_undefined_scaling_cannot_silently_remove_interior_dates(self):
+        frame = self.frame.copy(deep=True)
+        frame.loc[frame["date"].isin(self.dates[100:107]), "signal"] = 1.
+        with self.assertRaisesRegex(ValueError, "Undefined scaled features"):
             self.prepare(frame)
 
 
